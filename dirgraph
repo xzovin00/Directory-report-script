@@ -1,0 +1,228 @@
+#!/bin/sh
+
+##############################################
+#--------# Declaration of variables #--------#
+#--------------------------------------------#
+
+export POSIXLY_CORRECT=yes
+
+# Working directory is current wd if not set
+workDir=$(pwd)
+startDir=$(pwd)
+
+error=0
+
+# We always count the starting directory
+export directories=1
+export allfiles=0
+
+# -i variables
+FILE_ERE=""
+ignore=0
+
+# Normalization variables
+normalization="false"
+max=0
+
+# Filesize sums for hstogram all set to zero
+B=0; KiB=0; KiB10=0; KiB100=0; MiB=0; MiB10=0; MiB100=0; GiB=0; GiBM=0
+
+
+##############################################
+#----------------# Functions #---------------#
+#--------------------------------------------#
+
+
+# function help
+# Input: nothing
+# Output: help text
+
+help () {
+echo "
+IOS script dirgraph -help
+Valid input: ./dirgraph [-i FILE_ERE] [-n] [DIR]
+
+Arguments:
+-i	script ignores files/directories containing regex FILE_ERE
+-n	enables normalization
+DIR	if valid directory is given, script will work from there,
+	else it will work from current working directory
+	"
+exit 1
+}
+
+# function histogramCount
+# Input: size of a file
+# Output: Incremented variable of file size range.
+
+histogramCount () {
+	if [ "$1" -lt 100 ]; then
+		B=$((B+1))
+	elif [ "$1" -lt 1024 ]; then
+		KiB=$((KiB+1))
+	elif [ "$1" -lt 10240 ]; then
+		KiB10=$((KiB10+1))
+	elif [ "$1" -lt 102400 ]; then
+		KiB100=$((KiB100+1))
+	elif [ "$1" -lt 1048576 ]; then
+		MiB=$((MiB+1))
+	elif [ "$1" -lt 10485760 ]; then
+		MiB10=$((MiB10+1))
+	elif [ "$1" -lt 104857600 ]; then
+		MiB100=$((MiB100+1))
+	elif [ "$1" -lt 1073741824 ]; then
+		GiB=$((GiB+1))
+	else
+		GiBM=$((GiBM+1))
+	fi
+}
+
+# function dirCheck
+# Input: nothing, the script is already in correct working directory
+# Output: Number of files, directories and output of histogramCount over all files.
+
+dirCheck (){
+	for file in .[!.]* * ..?* ; do
+	
+		if [ ! -e "$file" ]; then
+			continue
+		fi
+		if [ ! -r "$file" ]; then
+			echo "Can't read $file" >&2
+			error=1
+			continue
+		fi
+			# If file fits regex, ignore it
+		if [ "$ignore" -eq 1 ]; then
+			if echo "$file" | grep -Eq -- "$FILE_ERE" ; then
+				continue
+			fi
+		fi
+
+		if [ -d "$file" ]; then
+			directories=$((directories+1))
+			cd "$file" || exit 1
+			dirCheck
+			cd ..
+		elif [ -f "$file" ];then
+			allfiles=$((allfiles+1))
+			histogramCount "$(wc -c <"$file")"
+		fi
+	done
+}
+
+# function histogramPrint
+# Input: Number of times character '#' should be printed
+# Output: '#' character x times printed on stdout
+#
+# Normalization is implemented here:
+# If any variable is higher than lineSize ( and normalization is true )
+# then all variables will be normalized via
+# varilable=variable*linesize/maxvarialbe expression.
+
+histogramPrint () {
+	i=0
+	maxHash=$1
+	if [ "$normalization" = "true" ]; then
+		if [ "$max" -gt "$lineSize" ]; then	
+			maxHash=$((maxHash * lineSize / max))
+		fi
+	fi
+
+	while [ $i -lt $maxHash ]
+	do
+		printf "#" 
+		i=$((i+1))
+	done
+}
+
+# function getMax
+# Input: Any amount of numbers
+# Output: Highest number saved in variable $max
+
+getMax () {
+	while [ $# -gt 0 ]
+	do
+		if [ "$1" -gt "$max" ]; then
+			max=$1
+		fi
+		shift
+	done
+}
+
+#######################################################
+#-------------# Main body of the script #-------------# 
+#-----------------------------------------------------#
+
+# Argument checking
+while [ $# -gt 0 ]
+do
+	if [ "$1" = "-h" ]; then
+		help
+	elif [ "$1" = "-n" ]; then
+		normalization="true"
+		if [ -t 1 ]; then
+			lineSize=$(tput cols)
+			lineSize=$((lineSize - 1))
+		else
+			lineSize=79
+		fi
+		lineSize=$((lineSize - 12))
+		
+	elif [ "$1" = "-i" ]; then
+		ignore=1
+		shift
+		FILE_ERE=$1
+	elif [ -d "$1" ]; then
+		workDir="$1"
+		cd "$workDir" || exit 1
+	else
+		echo "Invalid argument $1!" >&2
+		echo "Use argument -h for help" >&2
+		exit 1
+	fi
+	shift
+done
+
+# -i FILE_ERE does not contain working directory check
+if [ "$ignore" -eq 1 ]; then
+	if echo "$workDir" | grep -Eq -- "$FILE_ERE"; then
+		echo "Regex in FILE_ERE ignores root directory!" >&2
+		exit 1
+	fi
+fi
+
+if [ ! -r "$workDir" ]; then
+	echo "Can't read root directory!"  >&2
+	exit 1
+fi
+# Recursive file and directory counter
+dirCheck 
+cd "$startDir" || exit 1
+
+# Finds highest number from all filesize categories for normalization
+if [ "$normalization" = "true" ]; then
+	getMax "$B" "$KiB" "$KiB10" "$KiB100" "$MiB" "$MiB10" "$MiB100" "$GiB" "$GiBM"
+fi
+
+echo "Root directory: $workDir
+Directories: $directories
+All files: $allfiles
+File size histogram:
+  <100 B  : $(histogramPrint "$B")
+  <1 KiB  : $(histogramPrint "$KiB")
+  <10 KiB : $(histogramPrint "$KiB10")
+  <100 KiB: $(histogramPrint "$KiB100") 
+  <1 MiB  : $(histogramPrint "$MiB")
+  <10 KiB : $(histogramPrint "$MiB10")
+  <100 MiB: $(histogramPrint "$MiB100")
+  <1 GiB  : $(histogramPrint "$GiB")
+  >=1 GiB : $(histogramPrint "$GiBM")"
+
+
+if [ "$error" = 1 ]; then
+	exit 1
+else
+	# Succesfull end
+	exit 0
+fi
