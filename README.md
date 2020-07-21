@@ -1,2 +1,2 @@
 # IOS1
-Directory report script
+POSIXly correct directory report script.
